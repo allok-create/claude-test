@@ -1,11 +1,15 @@
 "use client";
 
-import { useActionState, useEffect, useRef, type ReactNode } from "react";
+import { createContext, startTransition, useActionState, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionState } from "@/lib/action";
 
+/** ActionForm 的送出中狀態（因不使用 form action 屬性，useFormStatus 無法取得） */
+const PendingContext = createContext(false);
+
 export function SubmitButton({ children, variant = "primary", className = "", pendingText = "處理中…" }: { children: ReactNode; variant?: "primary" | "danger" | "default"; className?: string; pendingText?: string }) {
-  const { pending } = useFormStatus();
+  const formPending = useFormStatus().pending;
+  const pending = useContext(PendingContext) || formPending;
   const cls = variant === "primary" ? "btn-primary" : variant === "danger" ? "btn-danger" : "";
   return (
     <button type="submit" className={`btn ${cls} ${className}`} disabled={pending}>
@@ -35,15 +39,26 @@ export function ActionForm({
   className?: string;
   resetOnSuccess?: boolean;
 }) {
-  const [state, formAction] = useActionState(action, {});
+  const [state, formAction, pending] = useActionState(action, {});
   const ref = useRef<HTMLFormElement>(null);
   useEffect(() => {
     if (resetOnSuccess && state?.message) ref.current?.reset();
   }, [state, resetOnSuccess]);
+  // 以 onSubmit 送出而非 action 屬性：避免 React 於送出後自動清空表單，驗證失敗時保留使用者輸入
   return (
-    <form ref={ref} action={formAction} className={className}>
-      <FormMessage state={state} />
-      {children}
+    <form
+      ref={ref}
+      className={className}
+      onSubmit={(e) => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        startTransition(() => formAction(fd));
+      }}
+    >
+      <PendingContext.Provider value={pending}>
+        <FormMessage state={state} />
+        {children}
+      </PendingContext.Provider>
     </form>
   );
 }
