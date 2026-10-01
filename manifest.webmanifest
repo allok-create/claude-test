@@ -1,0 +1,14 @@
+{
+  "name": "丙級會計練習站",
+  "short_name": "丙級會計",
+  "description": "丙級會計事務學科練習：題庫、模擬考、錯題本、成績分析",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#1f5fae",
+  "lang": "zh-Hant-TW",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

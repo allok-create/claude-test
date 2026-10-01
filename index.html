@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>丙級會計練習站</title>
+  <meta name="description" content="丙級會計事務學科練習：題庫練習、模擬考、錯題本與成績分析。">
+  <meta name="theme-color" content="#1f5fae">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/home" aria-label="回首頁">
+        <img src="assets/icon.svg" alt="" width="28" height="28">
+        <span>丙級會計練習站</span>
+      </a>
+      <nav class="nav" aria-label="主選單">
+        <a href="#/home" data-nav="home"><span class="ico" aria-hidden="true">⌂</span><span>首頁</span></a>
+        <a href="#/practice" data-nav="practice"><span class="ico" aria-hidden="true">✎</span><span>題庫</span></a>
+        <a href="#/exam" data-nav="exam"><span class="ico" aria-hidden="true">⏱</span><span>模擬考</span></a>
+        <a href="#/wrong" data-nav="wrong"><span class="ico" aria-hidden="true">✗</span><span>錯題本</span></a>
+        <a href="#/stats" data-nav="stats"><span class="ico" aria-hidden="true">▤</span><span>分析</span></a>
+      </nav>
+      <a class="icon-btn settings-link" href="#/settings" data-nav="settings" aria-label="設定" title="設定">⚙</a>
+    </div>
+  </header>
+
+  <main id="app" class="container" tabindex="-1"></main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p class="firm"><strong>方圓會計師事務所</strong>　會計師　梁右澤</p>
+      <p>地址：台中市北屯區文心路四段955號20樓之5｜電話：<a href="tel:0422410032">04-22410032</a></p>
+      <p>聯絡：@allfine</p>
+      <p class="disclaimer">※ 本頁內容僅供參考，實際申報以主管機關核定為準</p>
+    </div>
+  </footer>
+
+  <div id="tooltip" class="tooltip" role="status" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <noscript><p class="container">本網站需要啟用 JavaScript 才能使用。</p></noscript>
+  <script src="js/questions.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
