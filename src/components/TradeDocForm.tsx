@@ -3,6 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import type { ActionState } from "@/lib/action";
 import { FormMessage } from "./forms";
+import { AP_INVOICE_FORMATS, AR_INVOICE_FORMATS, CUSTOMS_MARKS, DEDUCTION_CODES, TAX_TYPES, taxRateOf, type TaxType } from "@/lib/vat-codes";
 
 /**
  * 應收單／應付單表單（用戶端元件）：
@@ -45,7 +46,6 @@ export function TradeDocForm({
   partners,
   products,
   accounts,
-  taxRates,
   defaultDate,
   defaultPartnerId,
   defaultAccountLabel,
@@ -55,7 +55,6 @@ export function TradeDocForm({
   partners: TradePartnerOption[];
   products: TradeProductOption[];
   accounts: TradeAccountOption[];
-  taxRates: { value: number; label: string }[];
   defaultDate: string;
   defaultPartnerId?: number;
   /** 未選擇科目時之預設科目說明，例：「4111 銷貨收入」 */
@@ -68,7 +67,11 @@ export function TradeDocForm({
   const [dueDate, setDueDate] = useState("");
   const [ref, setRef] = useState("");
   const [description, setDescription] = useState("");
-  const [taxRate, setTaxRate] = useState(String(taxRates[0]?.value ?? 0.05));
+  const [taxType, setTaxType] = useState<TaxType>("1");
+  const [invoiceFormat, setInvoiceFormat] = useState<string>(isAr ? "35" : "25");
+  const [customsMark, setCustomsMark] = useState("2");
+  const [deductionCode, setDeductionCode] = useState("1");
+  const formats = isAr ? AR_INVOICE_FORMATS : AP_INVOICE_FORMATS;
   const [lines, setLines] = useState<Line[]>(() => [blank()]);
 
   const partner = partners.find((p) => String(p.id) === partnerId);
@@ -77,7 +80,7 @@ export function TradeDocForm({
 
   const amounts = lines.map((l) => Math.round(toNum(l.quantity) * toCents(l.unitPrice)));
   const subtotal = amounts.reduce((s, a) => s + a, 0);
-  const rate = Number(taxRate) || 0;
+  const rate = taxRateOf(taxType);
   // 與伺服器端 calcTax 一致：稅額四捨五入至元
   const tax = Math.round((subtotal * rate) / 100) * 100;
   const total = subtotal + tax;
@@ -105,7 +108,10 @@ export function TradeDocForm({
     dueDate: dueDate || null,
     ref: ref || null,
     description: description || null,
-    taxRate: rate,
+    taxType,
+    invoiceFormat,
+    customsMark: isAr && taxType === "2" ? customsMark : null,
+    deductionCode: isAr ? null : deductionCode,
     lines: lines
       .filter((l) => l.productId || l.description.trim() || l.unitPrice)
       .map((l) => ({
@@ -150,20 +156,71 @@ export function TradeDocForm({
           <input type="date" className="input" value={dueDate} min={docDate} onChange={(e) => setDueDate(e.target.value)} />
           <span className="mt-1 block text-xs text-slate-400">{autoDue ? `空白則依付款條件為 ${autoDue}` : "空白則依付款條件自動計算"}</span>
         </label>
-        <label className="block">
-          <span className="label">{isAr ? "統一發票號碼" : "廠商發票號碼"}</span>
-          <input className="input font-mono" value={ref} onChange={(e) => setRef(e.target.value.toUpperCase())} placeholder="例：AB12345678" maxLength={20} />
+        <label className="block sm:col-span-2">
+          <span className="label">{isAr ? "發票格式代號" : "進項憑證格式代號"}</span>
+          <select className="input" value={invoiceFormat} onChange={(e) => setInvoiceFormat(e.target.value)}>
+            {formats.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="block">
-          <span className="label">稅別</span>
-          <select className="input" value={taxRate} onChange={(e) => setTaxRate(e.target.value)}>
-            {taxRates.map((t) => (
+          <span className="label">{isAr ? "統一發票號碼" : invoiceFormat === "28" ? "海關繳納證號碼" : "憑證號碼"}</span>
+          <input
+            className="input font-mono"
+            value={ref}
+            onChange={(e) => setRef(e.target.value.toUpperCase())}
+            placeholder={invoiceFormat === "28" ? "14 碼" : "例：AB12345678"}
+            maxLength={invoiceFormat === "28" ? 14 : 12}
+            disabled={invoiceFormat === "none"}
+          />
+          <span className="mt-1 block text-xs text-slate-400">營業稅媒體申報必填</span>
+        </label>
+        <label className="block">
+          <span className="label">課稅別</span>
+          <select
+            className="input"
+            value={taxType}
+            onChange={(e) => {
+              const t = e.target.value as TaxType;
+              setTaxType(t);
+              if (!isAr && t !== "1" && (deductionCode === "1" || deductionCode === "2")) setDeductionCode(deductionCode === "2" ? "4" : "3");
+            }}
+          >
+            {TAX_TYPES.map((t) => (
               <option key={t.value} value={t.value}>
                 {t.label}
               </option>
             ))}
           </select>
         </label>
+        {isAr && taxType === "2" && (
+          <label className="block sm:col-span-2">
+            <span className="label">通關方式註記</span>
+            <select className="input" value={customsMark} onChange={(e) => setCustomsMark(e.target.value)}>
+              {CUSTOMS_MARKS.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!isAr && (
+          <label className="block sm:col-span-2">
+            <span className="label">扣抵代號</span>
+            <select className="input" value={deductionCode} onChange={(e) => setDeductionCode(e.target.value)}>
+              {DEDUCTION_CODES.map((d) => (
+                <option key={d.value} value={d.value} disabled={taxType !== "1" && (d.value === "1" || d.value === "2")}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-slate-400">交際費、自用乘人小汽車等依營業稅法第 19 條不得扣抵者，請選 3 或 4；不得扣抵稅額將併入成本費用</span>
+          </label>
+        )}
         <label className="block sm:col-span-2">
           <span className="label">摘要</span>
           <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder={isAr ? "例：十月份商品銷貨" : "例：十月份進貨"} />

@@ -23,9 +23,11 @@ async function main() {
   const { createVoucher } = await import("../src/lib/services/vouchers");
   const { createPartner } = await import("../src/lib/services/partners");
   const { createProduct, adjustInventory } = await import("../src/lib/services/inventory");
-  const { createInvoice, createReceipt } = await import("../src/lib/services/receivables");
+  const { createInvoice, createReceipt, createArAllowance } = await import("../src/lib/services/receivables");
+  const { fileVatPeriod } = await import("../src/lib/services/vat");
   const { createBill, createPayment } = await import("../src/lib/services/payables");
   const { createUser, listRoles } = await import("../src/lib/services/users");
+  const { setSetting } = await import("../src/lib/services/settings");
 
   const db = getDb();
   const hasTxn = (db.prepare("SELECT COUNT(*) c FROM vouchers").get() as { c: number }).c > 0;
@@ -44,6 +46,9 @@ async function main() {
   };
   const yuan = (n: number) => Math.round(n * 100);
 
+  // 營業稅申報資料（示範用）
+  setSetting("company.tax_reg_no", "123456789");
+
   // 使用者
   const roles = listRoles();
   const roleId = (code: string) => roles.find((r) => r.code === code)!.id;
@@ -57,6 +62,7 @@ async function main() {
   const c3 = createPartner("customer", { code: "C003", name: "晨光設計工作室", contactPerson: "黃先生", phone: "0912-345-678", paymentTermsDays: 15, isActive: true }, ADMIN);
   const v1 = createPartner("vendor", { code: "V001", name: "聯合電子材料股份有限公司", taxId: "86517413", contactPerson: "吳業務", phone: "03-5781234", paymentTermsDays: 30, bankAccount: "台灣銀行 012-345678-9", isActive: true }, ADMIN);
   const v2 = createPartner("vendor", { code: "V002", name: "文心大樓管理顧問有限公司", taxId: "28495301", phone: "04-22410000", paymentTermsDays: 0, isActive: true }, ADMIN);
+  const v4 = createPartner("vendor", { code: "V004", name: "中台公用事業股份有限公司", taxId: "53106429", phone: "04-23001234", paymentTermsDays: 0, isActive: true }, ADMIN);
   const v3 = createPartner("vendor", { code: "V003", name: "快捷物流股份有限公司", taxId: "97162640", phone: "02-26581234", paymentTermsDays: 30, isActive: true }, ADMIN);
 
   // 商品
@@ -97,7 +103,7 @@ async function main() {
 
   // 每月租金與費用
   for (let m = 1; m <= 9; m++) {
-    createBill({ vendorId: v2, billDate: d(m, 5), dueDate: d(m, 10), vendorRef: `RT${year}${String(m).padStart(2, "0")}`, description: `${m} 月份辦公室租金`, taxRate: 0.05, lines: [
+    createBill({ vendorId: v2, billDate: d(m, 5), dueDate: d(m, 10), vendorRef: `RT${String(year * 100 + m).padStart(8, "0")}`, description: `${m} 月份辦公室租金`, taxRate: 0.05, lines: [
       { accountId: acct("6202"), description: `${m} 月份辦公室租金`, quantity: 1, unitPrice: yuan(30000) },
     ] }, ADMIN);
     createPayment({ vendorId: v2, paymentDate: d(m, 10), accountId: acct("1103"), amount: yuan(31500), description: `${m} 月租金` }, ADMIN);
@@ -116,16 +122,12 @@ async function main() {
         { accountId: acct("1103"), debit: 0, credit: yuan(85_500), description: "薪資轉帳" },
       ],
     }, ADMIN, { autoPost: true });
-    createVoucher({
-      voucherDate: d(m, 20),
-      voucherType: "payment",
-      description: `${m} 月份水電費`,
-      lines: [
-        { accountId: acct("6207"), debit: yuan(8_200 + m * 150), credit: 0 },
-        { accountId: acct("1470"), debit: yuan(410), credit: 0 },
-        { accountId: acct("1103"), debit: 0, credit: yuan(8_200 + m * 150 + 410) },
-      ],
-    }, ADMIN, { autoPost: true });
+    // 水電費：公用事業電子發票（格式代號 25）
+    const utility = 8_200 + m * 150;
+    createBill({ vendorId: v4, billDate: d(m, 20), vendorRef: `CE${String(year * 100 + m).padStart(8, "0")}`, invoiceFormat: "25", taxType: "1", deductionCode: "1", description: `${m} 月份水電費`, lines: [
+      { accountId: acct("6207"), description: `${m} 月份水電費`, quantity: 1, unitPrice: yuan(utility) },
+    ] }, ADMIN);
+    createPayment({ vendorId: v4, paymentDate: d(m, 20), accountId: acct("1103"), amount: yuan(utility * 1.05) }, ADMIN);
   }
 
   // 銷貨
@@ -151,7 +153,7 @@ async function main() {
   createPayment({ vendorId: v1, paymentDate: d(4, 10), accountId: acct("1103"), amount: yuan(300_000) }, ADMIN);
 
   // 運費
-  createBill({ vendorId: v3, billDate: d(8, 20), taxRate: 0.05, description: "出貨運費", lines: [
+  createBill({ vendorId: v3, billDate: d(8, 20), vendorRef: "FR20260820", invoiceFormat: "21", taxType: "1", description: "出貨運費", lines: [
     { accountId: acct("6120"), description: "八月份出貨運費", quantity: 1, unitPrice: yuan(12_000) },
   ] }, ADMIN);
 
@@ -166,6 +168,16 @@ async function main() {
     ],
   }, ADMIN, { autoPost: true });
   adjustInventory({ productId: p3, date: d(6, 30), quantity: -2, reason: "年中盤點短少" }, ADMIN);
+
+  // 營業稅示範：不得扣抵之交際費、銷貨折讓
+  createBill({ vendorId: v3, billDate: d(7, 18), vendorRef: "EN20260718", invoiceFormat: "25", taxType: "1", deductionCode: "3", description: "客戶餐敘（交際費，不得扣抵）", lines: [
+    { accountId: acct("6209"), description: "客戶餐敘", quantity: 1, unitPrice: yuan(6_000) },
+  ] }, ADMIN);
+  const salesInvoice = db.prepare("SELECT id FROM ar_invoices WHERE gui_no = 'AA00000105'").pluck().get() as number;
+  createArAllowance({ docId: salesInvoice, date: d(8, 25), amount: yuan(5_000), reason: "顯示器外箱破損折讓" }, ADMIN);
+
+  // 已完成申報之期別（示範累積留抵與結轉傳票）
+  for (const m of [1, 3, 5]) fileVatPeriod(`${year}-${String(m).padStart(2, "0")}`, ADMIN);
 
   // 一張未過帳的草稿傳票
   createVoucher({

@@ -22,6 +22,9 @@ const SOURCE_LINKS: Record<string, string> = {
   ar_receipt: "/receivables/receipts",
   ap_payment: "/payables/payments",
   inventory: "/inventory/transactions",
+  ar_allowance: "/receivables/allowances",
+  ap_allowance: "/payables/allowances",
+  vat: "/tax",
 };
 
 function userName(id: number | null) {

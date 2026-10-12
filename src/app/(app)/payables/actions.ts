@@ -3,8 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { authorize } from "@/lib/auth/session";
-import { int, runAction, str, type ActionState } from "@/lib/action";
-import { createBill, createPayment, voidBill, voidPayment } from "@/lib/services/payables";
+import { cents, int, runAction, str, type ActionState } from "@/lib/action";
+import { createBill, createPayment, voidBill, voidPayment, createApAllowance, voidApAllowance } from "@/lib/services/payables";
 import { parseSettlementPayload, parseTradePayload } from "../receivables/payload";
 
 export async function createBillAction(_prev: ActionState, fd: FormData): Promise<ActionState> {
@@ -18,7 +18,9 @@ export async function createBillAction(_prev: ActionState, fd: FormData): Promis
         dueDate: p.dueDate,
         vendorRef: p.ref,
         description: p.description,
-        taxRate: p.taxRate,
+        taxType: p.taxType,
+        invoiceFormat: p.invoiceFormat,
+        deductionCode: p.deductionCode,
         lines: p.lines,
       },
       user.id,
@@ -63,5 +65,25 @@ export async function voidPaymentAction(_prev: ActionState, fd: FormData): Promi
     voidPayment(int(fd, "id"), str(fd, "reason"), user.id);
     revalidatePath("/", "layout");
     return { message: "付款單已作廢" };
+  });
+}
+
+export async function createApAllowanceAction(_prev: ActionState, fd: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const user = await authorize("ap.manage");
+    const amount = cents(fd, "amount");
+    if (Number.isNaN(amount)) return { error: "折讓金額格式不正確" };
+    createApAllowance({ docId: int(fd, "docId"), date: str(fd, "date"), amount, reason: str(fd, "reason") }, user.id);
+    revalidatePath("/", "layout");
+    return { message: "折讓單已開立，並已自動產生傳票" };
+  });
+}
+
+export async function voidApAllowanceAction(_prev: ActionState, fd: FormData): Promise<ActionState> {
+  return runAction(async () => {
+    const user = await authorize("ap.manage");
+    voidApAllowance(int(fd, "id"), str(fd, "reason"), user.id);
+    revalidatePath("/", "layout");
+    return { message: "已作廢" };
   });
 }

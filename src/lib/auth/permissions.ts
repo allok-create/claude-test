@@ -56,6 +56,13 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
+    module: "營業稅",
+    permissions: [
+      { key: "tax.view", label: "檢視 401 申報書／匯出媒體申報檔" },
+      { key: "tax.file", label: "確認／取消營業稅申報" },
+    ],
+  },
+  {
     module: "庫存",
     permissions: [
       { key: "inventory.view", label: "檢視庫存" },
@@ -83,6 +90,14 @@ export function isPermission(value: string): value is Permission {
   return (ALL_PERMISSIONS as string[]).includes(value);
 }
 
+/** 後續版本新增之權限：既有資料庫啟動時一次性授予下列角色 */
+export const LATER_PERMISSION_GRANTS: { marker: string; grants: Record<string, Permission[]> }[] = [
+  {
+    marker: "seed.perm.tax",
+    grants: { admin: ["tax.view", "tax.file"], chief_accountant: ["tax.view", "tax.file"], accountant: ["tax.view"] },
+  },
+];
+
 /** 預設角色 */
 export const DEFAULT_ROLES: {
   code: string;
@@ -107,7 +122,7 @@ export const DEFAULT_ROLES: {
     name: "會計人員",
     description: "可輸入傳票、處理應收應付與庫存，不可作廢或關帳",
     permissions: ALL_PERMISSIONS.filter(
-      (p) => !p.startsWith("admin.") && p !== "vouchers.void" && p !== "accounts.manage",
+      (p) => !p.startsWith("admin.") && p !== "vouchers.void" && p !== "accounts.manage" && p !== "tax.file",
     ),
   },
   {

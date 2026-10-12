@@ -72,6 +72,7 @@ export const DEFAULT_ACCOUNTS: SeedAccount[] = [
   // 5 營業成本
   ["5", "營業成本", "expense", "cost_of_sales", null],
   ["5100", "銷貨成本", "expense", "cost_of_sales", "5"],
+  ["5190", "進貨退出及折讓", "expense", "cost_of_sales", "5"],
   ["5600", "勞務成本", "expense", "cost_of_sales", "5"],
 
   // 6 營業費用
@@ -126,6 +127,11 @@ export const DEFAULT_ACCOUNT_MAPPINGS: Record<string, string> = {
   "acct.inventory_gain": "7191",
   "acct.inventory_loss": "7881",
   "acct.current_earnings": "3360",
+  "acct.sales_allowance": "4190",
+  "acct.purchase_allowance": "5190",
+  "acct.vat_payable": "2205",
+  "acct.vat_credit": "1480",
+  "acct.vat_refund": "1200",
 };
 
 export const ACCOUNT_MAPPING_LABELS: Record<string, string> = {
@@ -142,4 +148,9 @@ export const ACCOUNT_MAPPING_LABELS: Record<string, string> = {
   "acct.inventory_gain": "存貨盤盈",
   "acct.inventory_loss": "存貨盤損",
   "acct.current_earnings": "本期損益",
+  "acct.sales_allowance": "銷貨折讓",
+  "acct.purchase_allowance": "進貨退出及折讓",
+  "acct.vat_payable": "應付營業稅",
+  "acct.vat_credit": "留抵稅額",
+  "acct.vat_refund": "應收退稅款",
 };

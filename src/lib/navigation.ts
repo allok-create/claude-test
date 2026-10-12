@@ -41,10 +41,19 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { href: "/receivables", label: "應收帳款", permission: "ar.view" },
       { href: "/receivables/receipts", label: "收款沖帳", permission: "ar.view" },
+      { href: "/receivables/allowances", label: "銷貨折讓", permission: "ar.view" },
       { href: "/receivables/aging", label: "應收帳齡", permission: "ar.view" },
       { href: "/payables", label: "應付帳款", permission: "ap.view" },
       { href: "/payables/payments", label: "付款沖帳", permission: "ap.view" },
+      { href: "/payables/allowances", label: "進貨折讓", permission: "ap.view" },
       { href: "/payables/aging", label: "應付帳齡", permission: "ap.view" },
+    ],
+  },
+  {
+    title: "營業稅",
+    items: [
+      { href: "/tax", label: "營業稅申報（401）", permission: "tax.view" },
+      { href: "/tax/records", label: "進銷項媒體資料", permission: "tax.view" },
     ],
   },
   {

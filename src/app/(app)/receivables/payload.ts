@@ -15,7 +15,10 @@ const tradeSchema = z.object({
   dueDate: z.string().nullish(),
   ref: z.string().nullish(),
   description: z.string().nullish(),
-  taxRate: z.coerce.number(),
+  taxType: z.enum(["1", "2", "3"]),
+  invoiceFormat: z.string(),
+  customsMark: z.string().nullish(),
+  deductionCode: z.enum(["1", "2", "3", "4"]).nullish(),
   lines: z.array(
     z.object({
       productId: z.coerce.number().int().nullish(),
@@ -58,7 +61,10 @@ export function parseTradePayload(fd: FormData) {
     dueDate: p.dueDate || null,
     ref: p.ref?.trim() || null,
     description: p.description?.trim() || null,
-    taxRate: p.taxRate,
+    taxType: p.taxType,
+    invoiceFormat: p.invoiceFormat,
+    customsMark: p.customsMark || null,
+    deductionCode: p.deductionCode ?? undefined,
     lines,
   };
 }

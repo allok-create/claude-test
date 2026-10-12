@@ -13,8 +13,7 @@ export default async function SettingsPage() {
   const s = getAllSettings();
   const accounts = listPostableAccounts();
   const codes = new Set(accounts.map((a) => a.code));
-  const rate = Number(s["tax.default_rate"] ?? "0.05");
-  const ratePct = Number.isFinite(rate) ? Math.round(rate * 10000) / 100 : 5;
+  const openingCredit = (Number(s["tax.opening_credit"] ?? "0") || 0) / 100;
 
   return (
     <>
@@ -52,8 +51,16 @@ export default async function SettingsPage() {
             <Field label="關帳日" hint="關帳日（含）以前之傳票不得新增、修改、過帳或作廢。留空表示未關帳。">
               <input type="date" name="posting.closing_date" className="input" defaultValue={s["posting.closing_date"] ?? ""} />
             </Field>
-            <Field label="預設營業稅率（%）" hint="應收、應付單據預設之稅率，一般為 5%">
-              <input type="number" name="tax.default_rate" className="input" step="0.01" min="0" max="100" defaultValue={ratePct} required />
+          </div>
+        </Card>
+
+        <Card title="營業稅申報">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="稅籍編號" hint="9 位數字，營業稅媒體申報檔必填（見稅籍登記資料）">
+              <input name="company.tax_reg_no" className="input" defaultValue={s["company.tax_reg_no"] ?? ""} pattern="\d{9}" inputMode="numeric" maxLength={9} />
+            </Field>
+            <Field label="期初累積留抵稅額（元）" hint="系統首次申報期別之上期累積留抵稅額；請同時於期初開帳傳票記入留抵稅額科目">
+              <input type="number" name="tax.opening_credit" className="input" step="1" min="0" defaultValue={openingCredit} />
             </Field>
           </div>
         </Card>

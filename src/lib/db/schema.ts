@@ -319,4 +319,68 @@ export const MIGRATIONS: { id: number; name: string; sql: string }[] = [
     );
     `,
   },
+  {
+    id: 2,
+    name: "vat_filing",
+    sql: `
+    -- 營業稅：憑證格式代號、課稅別、扣抵代號、通關方式註記、折讓
+    ALTER TABLE ar_invoices ADD COLUMN invoice_format TEXT NOT NULL DEFAULT '35';
+    ALTER TABLE ar_invoices ADD COLUMN tax_type TEXT NOT NULL DEFAULT '1';
+    ALTER TABLE ar_invoices ADD COLUMN customs_mark TEXT;
+    ALTER TABLE ar_invoices ADD COLUMN allowance_amount INTEGER NOT NULL DEFAULT 0;
+    UPDATE ar_invoices SET tax_type = '3' WHERE tax_rate = 0;
+
+    ALTER TABLE ap_bills ADD COLUMN invoice_format TEXT NOT NULL DEFAULT '25';
+    ALTER TABLE ap_bills ADD COLUMN tax_type TEXT NOT NULL DEFAULT '1';
+    ALTER TABLE ap_bills ADD COLUMN deduction_code TEXT NOT NULL DEFAULT '1';
+    ALTER TABLE ap_bills ADD COLUMN allowance_amount INTEGER NOT NULL DEFAULT 0;
+    UPDATE ap_bills SET tax_type = '3' WHERE tax_rate = 0;
+
+    -- 銷貨退回或折讓證明單（paid_amount 含折讓金額，allowance_amount 另記折讓合計）
+    CREATE TABLE ar_allowances (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      allowance_no   TEXT NOT NULL UNIQUE,
+      invoice_id     INTEGER NOT NULL REFERENCES ar_invoices(id),
+      allowance_date TEXT NOT NULL,
+      amount         INTEGER NOT NULL,      -- 未稅折讓金額
+      tax_amount     INTEGER NOT NULL,
+      reason         TEXT,
+      status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','void')),
+      voucher_id     INTEGER REFERENCES vouchers(id),
+      created_by     INTEGER REFERENCES users(id),
+      created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+    CREATE INDEX idx_ar_allow_invoice ON ar_allowances(invoice_id);
+
+    CREATE TABLE ap_allowances (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      allowance_no   TEXT NOT NULL UNIQUE,
+      bill_id        INTEGER NOT NULL REFERENCES ap_bills(id),
+      allowance_date TEXT NOT NULL,
+      amount         INTEGER NOT NULL,
+      tax_amount     INTEGER NOT NULL,
+      reason         TEXT,
+      status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','void')),
+      voucher_id     INTEGER REFERENCES vouchers(id),
+      created_by     INTEGER REFERENCES users(id),
+      created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+    CREATE INDEX idx_ap_allow_bill ON ap_allowances(bill_id);
+
+    -- 營業稅申報紀錄（每期兩個月，period 為起始月 YYYY-MM）
+    CREATE TABLE vat_filings (
+      period      TEXT PRIMARY KEY,
+      carry_in    INTEGER NOT NULL,
+      output_tax  INTEGER NOT NULL,
+      input_tax   INTEGER NOT NULL,
+      payable     INTEGER NOT NULL,
+      refund      INTEGER NOT NULL,
+      carry_out   INTEGER NOT NULL,
+      data        TEXT NOT NULL,
+      voucher_id  INTEGER REFERENCES vouchers(id),
+      filed_by    INTEGER REFERENCES users(id),
+      filed_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+    );
+    `,
+  },
 ];

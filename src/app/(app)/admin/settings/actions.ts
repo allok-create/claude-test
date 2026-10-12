@@ -19,6 +19,7 @@ export async function saveSettingsAction(_prev: ActionState, fd: FormData): Prom
       "company.address": str(fd, "company.address"),
       "company.phone": str(fd, "company.phone"),
       "company.owner": str(fd, "company.owner"),
+      "company.tax_reg_no": str(fd, "company.tax_reg_no"),
       "posting.auto": bool(fd, "posting.auto") ? "1" : "0",
       "posting.closing_date": str(fd, "posting.closing_date"),
     };
@@ -27,9 +28,10 @@ export async function saveSettingsAction(_prev: ActionState, fd: FormData): Prom
     if (next["company.tax_id"] && !/^\d{8}$/.test(next["company.tax_id"])) throw new AppError("統一編號須為 8 位數字");
     if (next["posting.closing_date"] && !isValidDate(next["posting.closing_date"])) throw new AppError("關帳日格式不正確");
 
-    const ratePct = num(fd, "tax.default_rate");
-    if (!Number.isFinite(ratePct) || ratePct < 0 || ratePct > 100) throw new AppError("預設稅率須介於 0 至 100%");
-    next["tax.default_rate"] = String(Math.round(ratePct * 100) / 10000);
+    if (next["company.tax_reg_no"] && !/^\d{9}$/.test(next["company.tax_reg_no"])) throw new AppError("稅籍編號須為 9 位數字");
+    const credit = num(fd, "tax.opening_credit");
+    if (!Number.isFinite(credit) || credit < 0) throw new AppError("期初累積留抵稅額須為 0 或正數");
+    next["tax.opening_credit"] = String(Math.round(credit * 100));
 
     const findAccount = getDb().prepare("SELECT is_detail FROM accounts WHERE code = ?");
     for (const [key, label] of Object.entries(ACCOUNT_MAPPING_LABELS)) {

@@ -27,6 +27,9 @@ export const VOUCHER_SOURCE_LABELS: Record<string, string> = {
   ap_bill: "應付帳款",
   ap_payment: "應付付款",
   inventory: "庫存調整",
+  ar_allowance: "銷貨折讓",
+  ap_allowance: "進貨折讓",
+  vat: "營業稅結轉",
 };
 
 export type VoucherLineInput = {

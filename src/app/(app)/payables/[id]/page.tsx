@@ -3,13 +3,15 @@ import { notFound } from "next/navigation";
 import { requirePermission } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { getPartner } from "@/lib/services/partners";
-import { BILL_STATUS_LABELS, getBill, getBillLines } from "@/lib/services/payables";
+import { BILL_STATUS_LABELS, getBill, getBillLines, listApAllowances } from "@/lib/services/payables";
 import { getCompanyInfo } from "@/lib/services/settings";
 import { today, toRocDate } from "@/lib/utils/date";
 import { formatMoney, formatQty } from "@/lib/utils/money";
 import { ActionButton, PrintButton } from "@/components/forms";
+import { AllowanceSection } from "@/components/AllowanceSection";
+import { formatLabel, TAX_TYPE_LABELS, DEDUCTION_CODES } from "@/lib/vat-codes";
 import { Alert, Card, EmptyRow, LinkButton, PageHeader, StatusBadge } from "@/components/ui";
-import { voidBillAction } from "../actions";
+import { voidBillAction, createApAllowanceAction, voidApAllowanceAction } from "../actions";
 
 export const metadata = { title: "應付單明細" };
 
@@ -46,6 +48,8 @@ export default async function BillDetailPage({ params, searchParams }: { params:
   const company = getCompanyInfo();
   const canManage = user.permissions.has("ap.manage");
   const outstanding = inv.total - inv.paid_amount;
+  const allowances = listApAllowances({ billId: inv.id });
+  const allowedNet = inv.subtotal - allowances.filter((a) => a.status === "active").reduce((t, a) => t + a.amount, 0);
   const overdue = (inv.status === "open" || inv.status === "partial") && inv.due_date < today();
 
   return (
@@ -69,7 +73,7 @@ export default async function BillDetailPage({ params, searchParams }: { params:
       />
       {saved && <Alert tone="success">應付單已登錄，並已自動產生傳票 {inv.voucher_no}。</Alert>}
       {inv.status === "void" && <Alert tone="warn">此應付單已作廢，相關傳票已一併作廢。</Alert>}
-      {canManage && inv.status !== "void" && inv.paid_amount > 0 && <Alert>此應付單已有付款沖帳，如需作廢請先作廢相關付款單。</Alert>}
+      {canManage && inv.status !== "void" && inv.paid_amount > 0 && <Alert>此應付單已有付款或折讓沖帳，如需作廢請先作廢相關付款單或折讓單。</Alert>}
 
       <Card bodyClassName="p-6" className="mb-4">
         <div className="mb-4 text-center">
@@ -120,7 +124,15 @@ export default async function BillDetailPage({ params, searchParams }: { params:
           </div>
           <div>
             <span className="text-slate-500">稅別：</span>
-            {inv.tax_rate > 0 ? `應稅 ${inv.tax_rate * 100}%` : "零稅率／免稅"}
+            {TAX_TYPE_LABELS[inv.tax_type]}{inv.tax_rate > 0 ? ` ${inv.tax_rate * 100}%` : ""}
+          </div>
+          <div>
+            <span className="text-slate-500">格式代號：</span>
+            {formatLabel(inv.invoice_format)}
+          </div>
+          <div>
+            <span className="text-slate-500">扣抵代號：</span>
+            {DEDUCTION_CODES.find((d) => d.value === inv.deduction_code)?.label}
           </div>
           {inv.description && (
             <div className="sm:col-span-3">
@@ -174,7 +186,11 @@ export default async function BillDetailPage({ params, searchParams }: { params:
               </tr>
               <tr>
                 <td colSpan={6} className="text-right">已付金額</td>
-                <td className="num">{formatMoney(inv.paid_amount)}</td>
+                <td className="num">{formatMoney(inv.paid_amount - inv.allowance_amount)}</td>
+              </tr>
+              <tr>
+                <td colSpan={6} className="text-right">折讓金額（含稅）</td>
+                <td className="num">{formatMoney(inv.allowance_amount)}</td>
               </tr>
               <tr>
                 <td colSpan={6} className="text-right">未付餘額</td>
@@ -218,6 +234,17 @@ export default async function BillDetailPage({ params, searchParams }: { params:
           </tbody>
         </table>
       </Card>
+      <AllowanceSection
+        mode="ap"
+        docId={inv.id}
+        rows={allowances}
+        canCreate={canManage && inv.status !== "void"}
+        maxAmount={Math.min(allowedNet, Math.floor(outstanding / (1 + inv.tax_rate)))}
+        defaultDate={today() < inv.bill_date ? inv.bill_date : today()}
+        taxRate={inv.tax_rate}
+        createAction={createApAllowanceAction}
+        voidAction={voidApAllowanceAction}
+      />
     </>
   );
 }

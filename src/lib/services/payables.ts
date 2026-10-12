@@ -4,7 +4,9 @@ import { addDays, isValidDate, today } from "../utils/date";
 import { calcTax } from "../utils/money";
 import { audit } from "./audit";
 import { recordStockMovement } from "./inventory";
-import { buildAging, computeLines, type DocStatus, type TradeLineInput } from "./receivables";
+import { buildAging, computeLines, resolveTaxType, type AllowanceInput, type DocStatus, type TradeLineInput } from "./receivables";
+import { AP_INVOICE_FORMATS, allowanceFormatFor, GUI_PATTERN, isDeductible, taxRateOf, type DeductionCode, type TaxType } from "../vat-codes";
+import { assertVatPeriodOpen } from "./vat-lock";
 import { nextNumber } from "./sequences";
 import { assertPeriodOpen, getMappedAccountId } from "./settings";
 import { createVoucher, voidVoucher, type VoucherLineInput } from "./vouchers";
@@ -26,9 +28,30 @@ export type BillInput = {
   dueDate?: string | null;
   vendorRef?: string | null;
   description?: string | null;
-  taxRate: number;
+  taxType?: TaxType;
+  /** @deprecated 改用 taxType */
+  taxRate?: number;
+  /** 進項憑證格式代號 21／22／25／28，none 為不申報 */
+  invoiceFormat?: string;
+  /** 扣抵代號 1–4 */
+  deductionCode?: DeductionCode;
   lines: TradeLineInput[];
 };
+
+/**
+ * 進項憑證號碼：
+ * 21／25：統一發票號碼（2 碼字軌 + 8 碼數字）；25 亦可為公用事業載具流水號（10 碼）
+ * 22：統一發票號碼或其他憑證號碼（10 碼以內英數字）
+ * 28：海關代徵營業稅繳納證號碼（14 碼英數字）
+ */
+export function normalizeVendorRef(format: string, v: string | null | undefined): string | null {
+  const s = (v ?? "").replace(/[\s-]/g, "").toUpperCase();
+  if (!s) return null;
+  if (format === "28") assert(/^[0-9A-Z]{14}$/.test(s), "海關代徵營業稅繳納證號碼須為 14 碼英數字");
+  else if (format === "21") assert(GUI_PATTERN.test(s), "統一發票號碼須為 2 碼英文字軌加 8 碼數字，例：AB12345678");
+  else if (format === "22" || format === "25") assert(/^[0-9A-Z]{1,10}$/.test(s), "憑證號碼須為 10 碼以內英數字");
+  return s;
+}
 
 export type ApBill = {
   id: number;
@@ -41,6 +64,10 @@ export type ApBill = {
   vendor_ref: string | null;
   description: string | null;
   tax_rate: number;
+  tax_type: TaxType;
+  invoice_format: string;
+  deduction_code: DeductionCode;
+  allowance_amount: number;
   subtotal: number;
   tax_amount: number;
   total: number;
@@ -58,9 +85,19 @@ function statusFor(total: number, paid: number): DocStatus {
 
 export function createBill(input: BillInput, userId: number): number {
   assert(isValidDate(input.billDate), "帳單日期格式不正確");
-  assert([0, 0.05].includes(input.taxRate), "稅率不正確");
+  const taxType = resolveTaxType(input.taxType, input.taxRate);
+  assert(["1", "2", "3"].includes(taxType), "課稅別不正確");
+  const taxRate = taxRateOf(taxType);
+  const invoiceFormat = input.invoiceFormat ?? "25";
+  assert(AP_INVOICE_FORMATS.some((f) => f.value === invoiceFormat), "憑證格式代號不正確");
+  const deductionCode: DeductionCode = input.deductionCode ?? "1";
+  assert(["1", "2", "3", "4"].includes(deductionCode), "扣抵代號不正確");
+  if (taxType !== "1") assert(!isDeductible(deductionCode), "零稅率或免稅進項無可扣抵稅額，扣抵代號請選 3 或 4");
+  if (invoiceFormat === "none") assert(!(taxType === "1" && isDeductible(deductionCode)), "收據等無稅額憑證不得扣抵進項稅額，請選擇課稅別「免稅」或扣抵代號 3／4");
+  const vendorRef = normalizeVendorRef(invoiceFormat, input.vendorRef);
   return tx((db) => {
     assertPeriodOpen(input.billDate);
+    assertVatPeriodOpen(input.billDate);
     const vendor = db.prepare("SELECT * FROM vendors WHERE id = ?").get(input.vendorId) as
       | { id: number; name: string; payment_terms_days: number; is_active: number }
       | undefined;
@@ -73,17 +110,27 @@ export function createBill(input: BillInput, userId: number): number {
     const inventoryAccount = getMappedAccountId("acct.inventory");
     const expenseAccount = getMappedAccountId("acct.purchase_expense");
     const subtotal = lines.reduce((s, l) => s + l.amount, 0);
-    const taxAmount = calcTax(subtotal, input.taxRate);
+    const taxAmount = calcTax(subtotal, taxRate);
     const total = subtotal + taxAmount;
     assert(total > 0, "應付金額須大於 0");
+    // 不得扣抵之進項稅額併入各明細之成本／費用（依金額比例分攤，尾差歸最後一列）
+    const deductible = isDeductible(deductionCode);
+    const taxShares = lines.map(() => 0);
+    if (!deductible && taxAmount > 0) {
+      let allocated = 0;
+      lines.forEach((l, i) => {
+        taxShares[i] = i === lines.length - 1 ? taxAmount - allocated : Math.round((taxAmount * l.amount) / subtotal);
+        allocated += taxShares[i];
+      });
+    }
 
     const billNo = nextNumber("AP", input.billDate.slice(0, 7).replace("-", ""));
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO ap_bills (bill_no, vendor_id, bill_date, due_date, vendor_ref, description, tax_rate, subtotal, tax_amount, total, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ap_bills (bill_no, vendor_id, bill_date, due_date, vendor_ref, description, tax_rate, tax_type, invoice_format, deduction_code, subtotal, tax_amount, total, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(billNo, vendor.id, input.billDate, dueDate, input.vendorRef || null, input.description || null, input.taxRate, subtotal, taxAmount, total, userId);
+      .run(billNo, vendor.id, input.billDate, dueDate, vendorRef, input.description || null, taxRate, taxType, invoiceFormat, deductionCode, subtotal, taxAmount, total, userId);
     const billId = Number(lastInsertRowid);
 
     const insertLine = db.prepare(
@@ -105,7 +152,7 @@ export function createBill(input: BillInput, userId: number): number {
           date: input.billDate,
           type: "purchase",
           quantity: l.quantity,
-          unitCost: l.amount / l.quantity,
+          unitCost: (l.amount + taxShares[i]) / l.quantity,
           sourceType: "ap_bill",
           sourceId: billId,
           description: `進貨 ${billNo} ${vendor.name}`,
@@ -114,7 +161,7 @@ export function createBill(input: BillInput, userId: number): number {
         txnIds.push(txnId);
       }
       insertLine.run(billId, i + 1, l.productId || null, accountId, description, l.quantity, l.unitPrice, l.amount);
-      debitByAccount.set(accountId, (debitByAccount.get(accountId) ?? 0) + l.amount);
+      debitByAccount.set(accountId, (debitByAccount.get(accountId) ?? 0) + l.amount + taxShares[i]);
     });
 
     const memo = `進貨／費用 ${billNo} ${vendor.name}`;
@@ -122,7 +169,7 @@ export function createBill(input: BillInput, userId: number): number {
     for (const [accountId, amount] of debitByAccount) {
       if (amount > 0) vLines.push({ accountId, debit: amount, credit: 0, description: memo });
     }
-    if (taxAmount > 0) vLines.push({ accountId: getMappedAccountId("acct.input_vat"), debit: taxAmount, credit: 0, description: memo });
+    if (taxAmount > 0 && deductible) vLines.push({ accountId: getMappedAccountId("acct.input_vat"), debit: taxAmount, credit: 0, description: memo });
     vLines.push({ accountId: getMappedAccountId("acct.ap"), debit: 0, credit: total, description: memo, partnerType: "vendor", partnerId: vendor.id });
 
     const voucherId = createVoucher(
@@ -146,8 +193,9 @@ export function voidBill(id: number, reason: string, userId: number) {
     const bill = getBill(id);
     assert(bill, "應付單不存在");
     assert(bill.status !== "void", "應付單已作廢");
-    assert(bill.paid_amount === 0, "已有付款沖帳，請先作廢付款單");
+    assert(bill.paid_amount === 0, "已有付款或折讓沖帳，請先作廢付款單或折讓單");
     assertPeriodOpen(bill.bill_date);
+    assertVatPeriodOpen(bill.bill_date);
     const txns = db
       .prepare("SELECT product_id, quantity, unit_cost FROM inventory_transactions WHERE source_type = 'ap_bill' AND source_id = ? AND txn_type = 'purchase'")
       .all(id) as { product_id: number; quantity: number; unit_cost: number }[];
@@ -372,11 +420,13 @@ export function getApAging(asOf = today()) {
     .prepare(
       `SELECT b.vendor_id partner_id, ve.code partner_code, ve.name partner_name, b.due_date,
          b.total - COALESCE((SELECT SUM(x.amount) FROM ap_payment_allocations x JOIN ap_payments p ON p.id = x.payment_id
-                             WHERE x.bill_id = b.id AND p.payment_date <= ?), 0) outstanding
+                             WHERE x.bill_id = b.id AND p.payment_date <= ?), 0)
+           - COALESCE((SELECT SUM(a.amount + a.tax_amount) FROM ap_allowances a
+                       WHERE a.bill_id = b.id AND a.status = 'active' AND a.allowance_date <= ?), 0) outstanding
        FROM ap_bills b JOIN vendors ve ON ve.id = b.vendor_id
        WHERE b.status != 'void' AND b.bill_date <= ?`,
     )
-    .all(asOf, asOf) as { partner_id: number; partner_code: string; partner_name: string; due_date: string; outstanding: number }[];
+    .all(asOf, asOf, asOf) as { partner_id: number; partner_code: string; partner_name: string; due_date: string; outstanding: number }[];
   return buildAging(docs, asOf);
 }
 
@@ -389,4 +439,109 @@ export function getApSummary() {
        FROM ap_bills WHERE status IN ('open','partial')`,
     )
     .get(today()) as { outstanding: number; overdue: number; count: number };
+}
+
+export type ApAllowance = {
+  id: number;
+  allowance_no: string;
+  bill_id: number;
+  bill_no: string;
+  vendor_ref: string | null;
+  vendor_name: string;
+  allowance_date: string;
+  amount: number;
+  tax_amount: number;
+  reason: string | null;
+  status: "active" | "void";
+  voucher_id: number | null;
+  voucher_no: string | null;
+};
+
+/**
+ * 進貨退出或折讓證明單：借 應付帳款／貸 進項稅額（可扣抵者）、進貨退出及折讓。
+ * 僅處理金額折讓，不調整存貨單位成本，亦不含商品退出出庫。
+ */
+export function createApAllowance(input: AllowanceInput, userId: number): number {
+  assert(isValidDate(input.date), "折讓日期格式不正確");
+  assert(Number.isInteger(input.amount) && input.amount > 0, "折讓金額須大於 0");
+  assert(input.reason.trim(), "請輸入折讓原因");
+  return tx((db) => {
+    const bill = getBill(input.docId);
+    assert(bill, "應付單不存在");
+    assert(bill.status !== "void", "應付單已作廢");
+    assert(input.date >= bill.bill_date, "折讓日期不可早於帳單日期");
+    assert(bill.invoice_format === "none" || allowanceFormatFor(bill.invoice_format), "海關代徵營業稅繳納證不適用折讓單");
+    assertPeriodOpen(input.date);
+    assertVatPeriodOpen(input.date);
+    const prior = db.prepare("SELECT COALESCE(SUM(amount),0) s FROM ap_allowances WHERE bill_id = ? AND status = 'active'").get(bill.id) as { s: number };
+    assert(prior.s + input.amount <= bill.subtotal, `折讓金額合計不可超過帳單未稅金額 ${(bill.subtotal / 100).toLocaleString()} 元`);
+    const tax = calcTax(input.amount, bill.tax_rate);
+    const total = input.amount + tax;
+    assert(total <= bill.total - bill.paid_amount, `折讓含稅金額 ${(total / 100).toLocaleString()} 元超過未付餘額，請先作廢相關付款`);
+
+    const no = nextNumber("DA", input.date.slice(0, 7).replace("-", ""));
+    const { lastInsertRowid } = db
+      .prepare("INSERT INTO ap_allowances (allowance_no, bill_id, allowance_date, amount, tax_amount, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(no, bill.id, input.date, input.amount, tax, input.reason.trim(), userId);
+    const id = Number(lastInsertRowid);
+    const memo = `進貨折讓 ${no}（${bill.bill_no} ${bill.vendor_name}）`;
+    const deductible = isDeductible(bill.deduction_code);
+    const lines: VoucherLineInput[] = [
+      { accountId: getMappedAccountId("acct.ap"), debit: total, credit: 0, description: memo, partnerType: "vendor", partnerId: bill.vendor_id },
+      { accountId: getMappedAccountId("acct.purchase_allowance"), debit: 0, credit: deductible ? input.amount : total, description: memo },
+    ];
+    if (deductible && tax > 0) lines.push({ accountId: getMappedAccountId("acct.input_vat"), debit: 0, credit: tax, description: memo });
+    const voucherId = createVoucher({ voucherDate: input.date, voucherType: "transfer", description: memo, lines, source: "ap_allowance", sourceId: id }, userId, { autoPost: true });
+    db.prepare("UPDATE ap_allowances SET voucher_id = ? WHERE id = ?").run(voucherId, id);
+    const paid = bill.paid_amount + total;
+    db.prepare("UPDATE ap_bills SET paid_amount = ?, allowance_amount = allowance_amount + ?, status = ? WHERE id = ?").run(paid, total, statusFor(bill.total, paid), bill.id);
+    audit(userId, "create", "ap_allowance", id, { allowanceNo: no, billNo: bill.bill_no, amount: input.amount, tax });
+    return id;
+  });
+}
+
+export function voidApAllowance(id: number, reason: string, userId: number) {
+  assert(reason.trim(), "請輸入作廢原因");
+  tx((db) => {
+    const a = db.prepare("SELECT * FROM ap_allowances WHERE id = ?").get(id) as
+      | { id: number; allowance_no: string; bill_id: number; allowance_date: string; amount: number; tax_amount: number; status: string; voucher_id: number | null }
+      | undefined;
+    assert(a, "折讓單不存在");
+    assert(a.status === "active", "折讓單已作廢");
+    assertPeriodOpen(a.allowance_date);
+    assertVatPeriodOpen(a.allowance_date);
+    const bill = db.prepare("SELECT total, paid_amount FROM ap_bills WHERE id = ?").get(a.bill_id) as { total: number; paid_amount: number };
+    const total = a.amount + a.tax_amount;
+    const paid = bill.paid_amount - total;
+    db.prepare("UPDATE ap_bills SET paid_amount = ?, allowance_amount = allowance_amount - ?, status = ? WHERE id = ?").run(paid, total, statusFor(bill.total, paid), a.bill_id);
+    db.prepare("UPDATE ap_allowances SET status = 'void' WHERE id = ?").run(id);
+    if (a.voucher_id) voidVoucher(a.voucher_id, userId, `折讓單作廢：${reason}`, { internal: true });
+    audit(userId, "void", "ap_allowance", id, { allowanceNo: a.allowance_no, reason });
+  });
+}
+
+export function listApAllowances(filter: { billId?: number; from?: string; to?: string } = {}): ApAllowance[] {
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (filter.billId) {
+    where.push("a.bill_id = ?");
+    params.push(filter.billId);
+  }
+  if (filter.from) {
+    where.push("a.allowance_date >= ?");
+    params.push(filter.from);
+  }
+  if (filter.to) {
+    where.push("a.allowance_date <= ?");
+    params.push(filter.to);
+  }
+  return getDb()
+    .prepare(
+      `SELECT a.*, b.bill_no, b.vendor_ref, ve.name vendor_name, v.voucher_no
+       FROM ap_allowances a JOIN ap_bills b ON b.id = a.bill_id JOIN vendors ve ON ve.id = b.vendor_id
+       LEFT JOIN vouchers v ON v.id = a.voucher_id
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY a.allowance_date DESC, a.id DESC LIMIT 500`,
+    )
+    .all(...params) as ApAllowance[];
 }

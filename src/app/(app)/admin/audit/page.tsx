@@ -16,6 +16,9 @@ const ACTION_LABELS: Record<string, string> = {
   login_failed: "登入失敗",
   adjust: "庫存調整",
   change_password: "變更密碼",
+  file: "確認申報",
+  unfile: "取消申報",
+  export: "匯出",
 };
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -27,6 +30,9 @@ const ENTITY_LABELS: Record<string, string> = {
   ar_receipt: "收款單",
   ap_bill: "應付單",
   ap_payment: "付款單",
+  ar_allowance: "銷貨折讓單",
+  ap_allowance: "進貨折讓單",
+  vat: "營業稅申報",
   product: "商品",
   inventory: "庫存",
   user: "使用者",
